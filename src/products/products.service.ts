@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { validate as IsUUID } from 'uuid';
 
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { Product } from './entities/product.entity';
 import { PaginationDto } from '../common/dtos/pagination.dto';
+import { ProductImage } from './entities';
 
 @Injectable()
 export class ProductsService {
@@ -16,15 +17,25 @@ export class ProductsService {
   constructor(
     @InjectRepository(Product)
     private readonly producRepository: Repository<Product>,
+
+    @InjectRepository(ProductImage)
+    private readonly producImageRepository: Repository<ProductImage>,
+
+    private readonly dataSource: DataSource,
   ) { }
 
   async create(createProductDto: CreateProductDto) {
     try {
 
-      const product = this.producRepository.create(createProductDto);
+      const { images = [], ...productDetails } = createProductDto;
+
+      const product = this.producRepository.create({
+        ...createProductDto,
+        images: images.map(image => this.producImageRepository.create({ url: image })),
+      });
       await this.producRepository.save(product); //? Guardamos en la bdd
 
-      return product;
+      return { ...product, images };
 
     } catch (error) {
       this.handleDbException(error);
@@ -34,12 +45,29 @@ export class ProductsService {
   async findAll(paginationDto: PaginationDto) {
     try {
       const { limit = 10, offset = 0 } = paginationDto
-      return await this.producRepository.find({
+      const products = await this.producRepository.find({
         take: limit,
-        skip: offset
+        skip: offset,
+        relations: {
+          images: true
+        }
       });
+      return products.map(({ images, ...rest }) => (
+        {
+          ...rest,
+          images: images.map(img => img.url)
+        }
+      ));
     } catch (error) {
       this.handleDbException(error);
+    }
+  }
+
+  async findOnePlain(term: string) {
+    const { images = [], ...rest } = await this.findOne(term);
+    return {
+      ...rest,
+      images: images.map(img => img.url)
     }
   }
 
@@ -49,11 +77,14 @@ export class ProductsService {
       product = await this.producRepository.findOneBy({ id: term });
     } else {
       // product = await this.producRepository.findOneBy({ slug: term });
-      const queryBuilder = this.producRepository.createQueryBuilder();
-      product = await queryBuilder.where(`UPPER(title) =:title or slug =:slug`, {
-        title: term.toUpperCase(),
-        slug: term.toLowerCase()
-      }).getOne();
+      const queryBuilder = this.producRepository.createQueryBuilder('prod');
+      product = await queryBuilder
+        .where(`UPPER(title) =:title or slug =:slug`, {
+          title: term.toUpperCase(),
+          slug: term.toLowerCase(),
+        })
+        .leftJoinAndSelect('prod.images', 'prodImages')
+        .getOne();
     }
 
     if (!product) throw new NotFoundException(`Product not found with id ${term}`);
@@ -61,11 +92,21 @@ export class ProductsService {
   }
 
   async update(id: string, updateProductDto: UpdateProductDto) {
+
+    const { images, ...toUpdate } = updateProductDto;
+
     const product = await this.producRepository.preload({
-      id:id,
-      ...updateProductDto
+      id,
+      ...toUpdate,
     });
+
     if (!product) throw new NotFoundException(`Product not found with id ${id}`);
+
+    //? Creamos el query runner
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    
+
 
     try {
       return await this.producRepository.save(product);
@@ -80,6 +121,7 @@ export class ProductsService {
 
   }
 
+  //? Manejamos las excepciones de la base de datos
   private handleDbException(error: any) {
     if (error.code === '23505')
       throw new BadRequestException(error.detail);
