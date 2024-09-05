@@ -105,12 +105,23 @@ export class ProductsService {
     //? Creamos el query runner
 
     const queryRunner = this.dataSource.createQueryRunner();
-    
-
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
     try {
-      return await this.producRepository.save(product);
+      if (images) {
+        await queryRunner.manager.delete(ProductImage, { product: { id } }); //! Cuidado con eliminar todas las imagenes
+        product.images = images.map(img => this.producImageRepository.create({ url: img }));
+      }
+      await queryRunner.manager.save(product);
+
+      await queryRunner.commitTransaction();
+      await queryRunner.release();
+
+      return this.findOnePlain(id);
     } catch (error) {
+      await queryRunner.rollbackTransaction();
+      await queryRunner.release();
       this.handleDbException(error);
     }
   }
@@ -128,4 +139,14 @@ export class ProductsService {
     this.logger.error(error);
     throw new InternalServerErrorException('Unexpected error, check server logs');
   }
+
+  async delleteAllProducts() {
+    const query = this.producRepository.createQueryBuilder('prod');
+    try {
+      return await query.delete().where({}).execute();
+    } catch (error) {
+      this.handleDbException(error);
+    }
+  }
+
 }

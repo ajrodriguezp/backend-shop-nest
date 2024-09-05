@@ -12,5 +12,8 @@
 ```
 docker compose up -d
 ```
-
-6. Ejecutar modo dev ```npm run start:dev``` 
+6. Ejecutar seed para cargar datos en la bdd
+```
+http://localhost:3000/api/seed
+```
+7. Ejecutar modo dev ```npm run start:dev``` 
