@@ -52,6 +52,13 @@ export class AuthService {
     };
   }
 
+  async checkAuthStatus(user:User){
+    return {
+      ...user,
+      token: this.getJwtToken({ id: user.id }),
+    };
+  }
+
   //? METODOS PRIVADOS DE LOS SEVICIOS
 
   private getJwtToken(payload: JwtPayload) {
